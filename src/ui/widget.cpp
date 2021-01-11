@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -12,6 +13,7 @@
 
 #include "ui/widget.h"
 
+#include "base/clamp.h"
 #include "base/memory.h"
 #include "base/string.h"
 #include "os/display.h"
@@ -34,6 +36,7 @@
 #include "ui/view.h"
 #include "ui/window.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdarg>
 #include <cstdio>
@@ -45,14 +48,6 @@
 namespace ui {
 
 using namespace gfx;
-
-static inline void mark_dirty_flag(Widget* widget)
-{
-  while (widget) {
-    widget->enableFlags(DIRTY);
-    widget = widget->parent();
-  }
-}
 
 WidgetType register_widget_type()
 {
@@ -176,9 +171,12 @@ void Widget::setBgColor(gfx::Color color)
   m_bgColor = color;
   onSetBgColor();
 
+#ifdef _DEBUG
   if (m_style) {
-    LOG(WARNING) << "Warning setting bgColor to a widget with style\n";
+    LOG(WARNING, "UI: %s: Warning setting bgColor to a widget with style (%s)\n",
+        typeid(*this).name(), m_style->id().c_str());
   }
+#endif
 }
 
 void Widget::setTheme(Theme* theme)
@@ -416,18 +414,13 @@ Manager* Widget::manager() const
   return Manager::getDefault();
 }
 
-void Widget::getParents(bool ascendant, WidgetsList& parents)
+int Widget::getChildIndex(Widget* child)
 {
-  assert_ui_thread();
-
-  for (Widget* widget=this; widget; widget=widget->m_parent) {
-    // append parents in tail
-    if (ascendant)
-      parents.push_back(widget);
-    // append parents in head
-    else
-      parents.insert(parents.begin(), widget);
-  }
+  auto it = std::find(m_children.begin(), m_children.end(), child);
+  if (it != m_children.end())
+    return it - m_children.begin();
+  else
+    return -1;
 }
 
 Widget* Widget::nextSibling()
@@ -435,17 +428,17 @@ Widget* Widget::nextSibling()
   assert_ui_thread();
 
   if (!m_parent)
-    return NULL;
+    return nullptr;
 
   WidgetsList::iterator begin = m_parent->m_children.begin();
   WidgetsList::iterator end = m_parent->m_children.end();
   WidgetsList::iterator it = std::find(begin, end, this);
 
   if (it == end)
-    return NULL;
+    return nullptr;
 
   if (++it == end)
-    return NULL;
+    return nullptr;
 
   return *it;
 }
@@ -455,16 +448,16 @@ Widget* Widget::previousSibling()
   assert_ui_thread();
 
   if (!m_parent)
-    return NULL;
+    return nullptr;
 
   WidgetsList::iterator begin = m_parent->m_children.begin();
   WidgetsList::iterator end = m_parent->m_children.end();
   WidgetsList::iterator it = std::find(begin, end, this);
 
   if (it == begin || it == end)
-    return NULL;
+    return nullptr;
 
-  return *(++it);
+  return *(--it);
 }
 
 Widget* Widget::pick(const gfx::Point& pt,
@@ -552,7 +545,7 @@ void Widget::removeChild(WidgetsList::iterator& it)
   if (manager)
     manager->freeWidget(child);
 
-  child->m_parent = NULL;
+  child->m_parent = nullptr;
 }
 
 void Widget::removeChild(Widget* child)
@@ -596,6 +589,19 @@ void Widget::insertChild(int index, Widget* child)
 
   m_children.insert(m_children.begin()+index, child);
   child->m_parent = this;
+}
+
+void Widget::moveChildTo(Widget* thisChild, Widget* toThisPosition)
+{
+  auto itA = std::find(m_children.begin(), m_children.end(), thisChild);
+  auto itB = std::find(m_children.begin(), m_children.end(), toThisPosition);
+  if (itA == m_children.end()) {
+    ASSERT(false);
+    return;
+  }
+  int index = itB - m_children.begin();
+  m_children.erase(itA);
+  m_children.insert(m_children.begin() + index, thisChild);
 }
 
 // ===============================================================
@@ -698,14 +704,24 @@ void Widget::setBorder(const Border& br)
 {
   m_border = br;
 
+#ifdef _DEBUG
   if (m_style) {
-    LOG(WARNING) << "Warning setting border to a widget with style\n";
+    LOG(WARNING, "UI: %s: Warning setting border to a widget with style (%s)\n",
+        typeid(*this).name(), m_style->id().c_str());
   }
+#endif
 }
 
 void Widget::setChildSpacing(int childSpacing)
 {
   m_childSpacing = childSpacing;
+
+#ifdef _DEBUG
+  if (m_style) {
+    LOG(WARNING, "UI: %s: Warning setting child spacing to a widget with style (%s)\n",
+        typeid(*this).name(), m_style->id().c_str());
+  }
+#endif
 }
 
 void Widget::noBorderNoChildSpacing()
@@ -713,9 +729,12 @@ void Widget::noBorderNoChildSpacing()
   m_border = gfx::Border(0, 0, 0, 0);
   m_childSpacing = 0;
 
+#ifdef _DEBUG
   if (m_style) {
-    LOG(WARNING) << "Warning setting border to a widget with style\n";
+    LOG(WARNING, "UI: %s: Warning setting no border to a widget with style (%s)\n",
+        typeid(*this).name(), m_style->id().c_str());
   }
+#endif
 }
 
 void Widget::getRegion(gfx::Region& region)
@@ -808,9 +827,8 @@ void Widget::getDrawableRegion(gfx::Region& region, DrawableRegionFlags flags)
     view = View::getView(manager);
 
     Rect cpos;
-    if (view) {
+    if (view)
       cpos = static_cast<View*>(view)->viewportBounds();
-    }
     else
       cpos = manager->childrenBounds();
 
@@ -863,19 +881,19 @@ void Widget::getTextIconInfo(
   // Box size
   if (icon_align & CENTER) {   // With the icon in the center
     if (icon_align & MIDDLE) { // With the icon inside the text
-      box_w = MAX(icon_w, text_w);
-      box_h = MAX(icon_h, text_h);
+      box_w = std::max(icon_w, text_w);
+      box_h = std::max(icon_h, text_h);
     }
     // With the icon in the top or bottom
     else {
-      box_w = MAX(icon_w, text_w);
+      box_w = std::max(icon_w, text_w);
       box_h = icon_h + (hasText() ? childSpacing(): 0) + text_h;
     }
   }
   // With the icon in left or right that doesn't care by now
   else {
     box_w = icon_w + (hasText() ? childSpacing(): 0) + text_w;
-    box_h = MAX(icon_h, text_h);
+    box_h = std::max(icon_h, text_h);
   }
 
   // Box position
@@ -991,7 +1009,7 @@ void Widget::flushRedraw()
       for (c=0; c<nrects; ++c, ++it, --count) {
         // Create the draw message
         msg = new PaintMessage(count, *it);
-        msg->addRecipient(widget);
+        msg->setRecipient(widget);
 
         // Enqueue the draw message
         manager->enqueueMessage(msg);
@@ -1104,32 +1122,22 @@ void Widget::setTransparent(bool transparent)
 void Widget::invalidate()
 {
   assert_ui_thread();
-
-  // TODO we should use invalidateRect(bounds()) here.
-
-  if (isVisible()) {
-    m_updateRegion.clear();
-    getDrawableRegion(m_updateRegion, kCutTopWindows);
-
-    mark_dirty_flag(this);
-
-    for (auto child : m_children)
-      child->invalidate();
-  }
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(Region(bounds()));
 }
 
 void Widget::invalidateRect(const gfx::Rect& rect)
 {
   assert_ui_thread();
-
-  if (isVisible())
-    invalidateRegion(Region(rect));
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(Region(rect));
 }
 
 void Widget::invalidateRegion(const Region& region)
 {
   assert_ui_thread();
-  onInvalidateRegion(region);
+  if (!hasFlags(HIDDEN))        // Quick filter for hidden widgets
+    onInvalidateRegion(region);
 }
 
 class DeleteGraphicsAndSurface {
@@ -1227,8 +1235,8 @@ Size Widget::sizeHint()
     onSizeHint(ev);
 
     Size sz(ev.sizeHint());
-    sz.w = MID(m_minSize.w, sz.w, m_maxSize.w);
-    sz.h = MID(m_minSize.h, sz.h, m_maxSize.h);
+    sz.w = base::clamp(sz.w, m_minSize.w, m_maxSize.w);
+    sz.h = base::clamp(sz.h, m_minSize.h, m_maxSize.h);
     return sz;
   }
 }
@@ -1256,8 +1264,8 @@ Size Widget::sizeHint(const Size& fitIn)
     onSizeHint(ev);
 
     Size sz(ev.sizeHint());
-    sz.w = MID(m_minSize.w, sz.w, m_maxSize.w);
-    sz.h = MID(m_minSize.h, sz.h, m_maxSize.h);
+    sz.w = base::clamp(sz.w, m_minSize.w, m_maxSize.w);
+    sz.h = base::clamp(sz.h, m_minSize.h, m_maxSize.h);
     return sz;
   }
 }
@@ -1300,10 +1308,8 @@ void Widget::releaseFocus()
     manager()->freeFocus();
 }
 
-/**
- * Captures the mouse to send all the future mouse messsages to the
- * specified widget (included the kMouseMoveMessage and kSetCursorMessage).
- */
+// Captures the mouse to send all the future mouse messsages to the
+// specified widget (included the kMouseMoveMessage and kSetCursorMessage).
 void Widget::captureMouse()
 {
   if (!manager()->getCapture()) {
@@ -1311,9 +1317,7 @@ void Widget::captureMouse()
   }
 }
 
-/**
- * Releases the capture of the mouse events.
- */
+// Releases the capture of the mouse events.
 void Widget::releaseMouse()
 {
   if (manager()->getCapture() == this) {
@@ -1331,10 +1335,10 @@ bool Widget::offerCapture(ui::MouseMessage* mouseMsg, int widget_type)
       MouseMessage* mouseMsg2 = new MouseMessage(
         kMouseDownMessage,
         mouseMsg->pointerType(),
-        mouseMsg->buttons(),
+        mouseMsg->button(),
         mouseMsg->modifiers(),
         mouseMsg->position());
-      mouseMsg2->addRecipient(pick);
+      mouseMsg2->setRecipient(pick);
       manager()->enqueueMessage(mouseMsg2);
       return true;
     }
@@ -1342,24 +1346,9 @@ bool Widget::offerCapture(ui::MouseMessage* mouseMsg, int widget_type)
   return false;
 }
 
-bool Widget::hasFocus() const
-{
-  return hasFlags(HAS_FOCUS);
-}
-
-bool Widget::hasMouse() const
-{
-  return hasFlags(HAS_MOUSE);
-}
-
 bool Widget::hasMouseOver() const
 {
   return (this == pick(get_mouse_position()));
-}
-
-bool Widget::hasCapture() const
-{
-  return hasFlags(HAS_CAPTURE);
 }
 
 void Widget::setMnemonic(int mnemonic)
@@ -1407,13 +1396,9 @@ bool Widget::isMnemonicPressed(const KeyMessage* keyMsg) const
 
 bool Widget::onProcessMessage(Message* msg)
 {
-  ASSERT(msg != NULL);
+  ASSERT(msg != nullptr);
 
   switch (msg->type()) {
-
-    case kFunctionMessage:
-      static_cast<FunctionMessage*>(msg)->call();
-      break;
 
     case kOpenMessage:
     case kCloseMessage:
@@ -1437,7 +1422,7 @@ bool Widget::onProcessMessage(Message* msg)
       MouseMessage* mouseMsg = static_cast<MouseMessage*>(msg);
       MouseMessage mouseMsg2(kMouseDownMessage,
                              mouseMsg->pointerType(),
-                             mouseMsg->buttons(),
+                             mouseMsg->button(),
                              mouseMsg->modifiers(),
                              mouseMsg->position(),
                              mouseMsg->wheelDelta());
@@ -1451,7 +1436,7 @@ bool Widget::onProcessMessage(Message* msg)
     case kMouseMoveMessage:
     case kMouseWheelMessage:
       // Propagate the message to the parent.
-      if (parent() != NULL)
+      if (parent())
         return parent()->sendMessage(msg);
       else
         break;
@@ -1464,6 +1449,7 @@ bool Widget::onProcessMessage(Message* msg)
         set_mouse_cursor(kArrowCursor);
         return true;
       }
+      break;
 
   }
 
@@ -1475,8 +1461,10 @@ bool Widget::onProcessMessage(Message* msg)
   }
 
   // Propagate the message to the parent.
-  if (msg->propagateToParent() && parent())
+  if (msg->propagateToParent() && parent() &&
+      msg->commonAncestor() != parent()) {
     return parent()->sendMessage(msg);
+  }
 
   return false;
 }
@@ -1487,21 +1475,22 @@ bool Widget::onProcessMessage(Message* msg)
 
 void Widget::onInvalidateRegion(const Region& region)
 {
-  if (isVisible() && region.contains(bounds()) != Region::Out) {
-    Region reg1;
-    reg1.createUnion(m_updateRegion, region);
-    {
-      Region reg2;
-      getDrawableRegion(reg2, kCutTopWindows);
-      m_updateRegion.createIntersection(reg1, reg2);
-    }
-    reg1.createSubtraction(region, m_updateRegion);
+  if (!isVisible() || region.contains(bounds()) == Region::Out)
+    return;
 
-    mark_dirty_flag(this);
-
-    for (auto child : m_children)
-      child->invalidateRegion(reg1);
+  Region reg1;
+  reg1.createUnion(m_updateRegion, region);
+  {
+    Region reg2;
+    getDrawableRegion(reg2, kCutTopWindows);
+    m_updateRegion.createIntersection(reg1, reg2);
   }
+  reg1.createSubtraction(region, m_updateRegion);
+
+  setDirtyFlag();
+
+  for (auto child : m_children)
+    child->invalidateRegion(reg1);
 }
 
 void Widget::onSizeHint(SizeHintEvent& ev)
@@ -1604,6 +1593,9 @@ double Widget::onGetTextDouble() const
 
 void Widget::offsetWidgets(int dx, int dy)
 {
+  if (dx == 0 && dy == 0)
+    return;
+
   m_updateRegion.offset(dx, dy);
   m_bounds.offset(dx, dy);
 
@@ -1613,6 +1605,15 @@ void Widget::offsetWidgets(int dx, int dy)
 
   for (auto child : m_children)
     child->offsetWidgets(dx, dy);
+}
+
+void Widget::setDirtyFlag()
+{
+  Widget* widget = this;
+  while (widget) {
+    widget->enableFlags(DIRTY);
+    widget = widget->parent();
+  }
 }
 
 } // namespace ui

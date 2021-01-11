@@ -1,5 +1,5 @@
 // Aseprite Document Library
-// Copyright (c) 2018 Igara Studio S.A.
+// Copyright (c) 2018-2019 Igara Studio S.A.
 // Copyright (c) 2001-2016 David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -279,7 +279,7 @@ static void hline_for_image(int x1, int y, int x2, Data* data)
 void draw_line(Image* image, int x1, int y1, int x2, int y2, color_t color)
 {
   Data data = { image, color };
-  algo_line(x1, y1, x2, y2, &data, (AlgoPixel)pixel_for_image);
+  algo_line_continuous(x1, y1, x2, y2, &data, (AlgoPixel)pixel_for_image);
 }
 
 void draw_ellipse(Image* image, int x1, int y1, int x2, int y2, color_t color)
@@ -362,7 +362,7 @@ bool is_empty_image(const Image* img)
   color_t c = 0;                // alpha = 0
   if (img->colorMode() == ColorMode::INDEXED)
     c = img->maskColor();
-  return is_plain_image(img, 0);
+  return is_plain_image(img, c);
 }
 
 int count_diff_between_images(const Image* i1, const Image* i2)
@@ -414,6 +414,51 @@ void remap_image(Image* image, const Remap& remap)
 
   for (; it != end; ++it)
     *it = remap[*it];
+}
+
+// TODO test this hash routine and find a better alternative
+
+template <typename ImageTraits, uint32_t Mask>
+static uint32_t calculate_image_hash_templ(const Image* image,
+                                           const gfx::Rect& bounds)
+{
+  uint32_t hash = 0;
+  for (int y=0; y<bounds.h; ++y) {
+    auto p = (typename ImageTraits::address_t)image->getPixelAddress(bounds.x, bounds.y+y);
+    for (int x=0; x<bounds.w; ++x, ++p) {
+      uint32_t value = *p;
+      uint32_t mask = Mask;
+      while (mask) {
+        hash += value & mask & 0xff;
+        hash <<= 1;
+        value >>= 8;
+        mask >>= 8;
+      }
+    }
+  }
+  return hash;
+}
+
+uint32_t calculate_image_hash(const Image* img, const gfx::Rect& bounds)
+{
+  switch (img->pixelFormat()) {
+    case IMAGE_RGB:       return calculate_image_hash_templ<RgbTraits, rgba_rgb_mask>(img, bounds);
+    case IMAGE_GRAYSCALE: return calculate_image_hash_templ<GrayscaleTraits, graya_v_mask>(img, bounds);
+    case IMAGE_INDEXED:   return calculate_image_hash_templ<IndexedTraits, 0xff>(img, bounds);
+    case IMAGE_BITMAP:    return calculate_image_hash_templ<BitmapTraits, 1>(img, bounds);
+  }
+
+  uint32_t hash = 0;
+  for (int y=0; y<bounds.h; ++y) {
+    int bytes = img->getRowStrideSize(bounds.w);
+    uint8_t* p = img->getPixelAddress(bounds.x, bounds.y+y);
+    while (bytes-- > 0) {
+      hash += *p;
+      hash <<= 1;
+      ++p;
+    }
+  }
+  return hash;
 }
 
 } // namespace doc

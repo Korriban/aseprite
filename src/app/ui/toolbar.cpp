@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -227,10 +228,10 @@ bool ToolBar::onProcessMessage(Message* msg)
           MouseMessage* mouseMsg2 = new MouseMessage(
             kMouseDownMessage,
             mouseMsg->pointerType(),
-            mouseMsg->buttons(),
+            mouseMsg->button(),
             mouseMsg->modifiers(),
             mouseMsg->position());
-          mouseMsg2->addRecipient(strip);
+          mouseMsg2->setRecipient(strip);
           manager()->enqueueMessage(mouseMsg2);
         }
       }
@@ -659,10 +660,10 @@ bool ToolBar::ToolStrip::onProcessMessage(Message* msg)
           MouseMessage* mouseMsg2 = new MouseMessage(
             kMouseDownMessage,
             mouseMsg->pointerType(),
-            mouseMsg->buttons(),
+            mouseMsg->button(),
             mouseMsg->modifiers(),
             mouseMsg->position());
-          mouseMsg2->addRecipient(bar);
+          mouseMsg2->setRecipient(bar);
           manager()->enqueueMessage(mouseMsg2);
         }
       }

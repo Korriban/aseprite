@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -11,6 +12,7 @@
 #include "app/commands/command.h"
 #include "app/context_access.h"
 #include "app/doc_api.h"
+#include "app/i18n/strings.h"
 #include "app/modules/gui.h"
 #include "app/tx.h"
 #include "app/ui/color_bar.h"
@@ -25,7 +27,6 @@ namespace app {
 class CropSpriteCommand : public Command {
 public:
   CropSpriteCommand();
-  Command* clone() const override { return new CropSpriteCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -75,7 +76,6 @@ void CropSpriteCommand::onExecute(Context* context)
     document->getApi(tx).cropSprite(sprite, bounds);
     tx.commit();
   }
-  document->generateMaskBoundaries();
 
 #ifdef ENABLE_UI
   if (context->isUIAvailable())
@@ -86,16 +86,25 @@ void CropSpriteCommand::onExecute(Context* context)
 class AutocropSpriteCommand : public Command {
 public:
   AutocropSpriteCommand();
-  Command* clone() const override { return new AutocropSpriteCommand(*this); }
 
 protected:
+  void onLoadParams(const Params& params) override;
   bool onEnabled(Context* context) override;
   void onExecute(Context* context) override;
+  std::string onGetFriendlyName() const override;
+
+private:
+    bool m_byGrid = false;
 };
 
 AutocropSpriteCommand::AutocropSpriteCommand()
   : Command(CommandId::AutocropSprite(), CmdRecordableFlag)
 {
+}
+
+void AutocropSpriteCommand::onLoadParams(const app::Params& params)
+{
+  m_byGrid = params.get_as<bool>("byGrid");
 }
 
 bool AutocropSpriteCommand::onEnabled(Context* context)
@@ -110,16 +119,23 @@ void AutocropSpriteCommand::onExecute(Context* context)
   Doc* document(writer.document());
   Sprite* sprite(writer.sprite());
   {
-    Tx tx(writer.context(), "Trim Sprite");
-    document->getApi(tx).trimSprite(sprite);
+    Tx tx(writer.context(), onGetFriendlyName());
+    document->getApi(tx).trimSprite(sprite, m_byGrid);
     tx.commit();
   }
-  document->generateMaskBoundaries();
 
 #ifdef ENABLE_UI
   if (context->isUIAvailable())
     update_screen_for_document(document);
 #endif
+}
+
+std::string AutocropSpriteCommand::onGetFriendlyName() const
+{
+  if (m_byGrid)
+    return Strings::commands_AutocropSprite_ByGrid();
+  else
+    return Strings::commands_AutocropSprite();
 }
 
 Command* CommandFactory::createCropSpriteCommand()

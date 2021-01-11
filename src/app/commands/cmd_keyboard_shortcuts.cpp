@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -15,6 +16,7 @@
 #include "app/file_selector.h"
 #include "app/i18n/strings.h"
 #include "app/match_words.h"
+#include "app/modules/gui.h"
 #include "app/resource_finder.h"
 #include "app/tools/tool.h"
 #include "app/tools/tool_box.h"
@@ -43,7 +45,9 @@
 
 #include "keyboard_shortcuts.xml.h"
 
+#include <algorithm>
 #include <map>
+#include <memory>
 
 #define KEYBOARD_FILENAME_EXTENSION "aseprite-keys"
 
@@ -257,7 +261,7 @@ private:
         m_headerItem->contextXPos() +
         Graphics::measureUITextLength(
           convertKeyContextToUserFriendlyString(m_key->keycontext()), font());
-      size.w = MAX(size.w, w);
+      size.w = std::max(size.w, w);
     }
 
     if (m_key && !m_key->accels().empty()) {
@@ -462,9 +466,9 @@ private:
   AppMenuItem* m_menuitem;
   int m_level;
   ui::Accelerators m_newAccels;
-  base::SharedPtr<ui::Button> m_changeButton;
-  base::SharedPtr<ui::Button> m_deleteButton;
-  base::SharedPtr<ui::Button> m_addButton;
+  std::shared_ptr<ui::Button> m_changeButton;
+  std::shared_ptr<ui::Button> m_deleteButton;
+  std::shared_ptr<ui::Button> m_addButton;
   obs::scoped_connection m_changeConn;
   obs::scoped_connection m_deleteConn;
   obs::scoped_connection m_addConn;
@@ -533,6 +537,7 @@ public:
   }
 
 private:
+
   void deleteAllKeyItems() {
     deleteList(searchList());
     deleteList(menus());
@@ -777,7 +782,7 @@ private:
   void fillMenusList(ListBox* listbox, Menu* menu, int level) {
     for (auto child : menu->children()) {
       if (AppMenuItem* menuItem = dynamic_cast<AppMenuItem*>(child)) {
-        if (menuItem == AppMenus::instance()->getRecentListMenuitem())
+        if (menuItem->isRecentFileItem())
           continue;
 
         KeyItem* keyItem = new KeyItem(
@@ -812,6 +817,19 @@ private:
     }
   }
 
+  bool onProcessMessage(ui::Message* msg) override {
+    switch (msg->type()) {
+      case kOpenMessage:
+        load_window_pos(this, "KeyboardShortcuts");
+        invalidate();
+        break;
+      case kCloseMessage:
+        save_window_pos(this, "KeyboardShortcuts");
+        break;
+    }
+    return app::gen::KeyboardShortcuts::onProcessMessage(msg);
+  }
+
   app::KeyboardShortcuts& m_keys;
   MenuKeys& m_menuKeys;
   std::vector<ListBox*> m_listBoxes;
@@ -825,7 +843,6 @@ private:
 class KeyboardShortcutsCommand : public Command {
 public:
   KeyboardShortcutsCommand();
-  Command* clone() const override { return new KeyboardShortcutsCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -866,6 +883,7 @@ void KeyboardShortcutsCommand::onExecute(Context* context)
   KeyboardShortcutsWindow window(keys, menuKeys, neededSearchCopy);
 
   window.setBounds(gfx::Rect(0, 0, ui::display_w()*3/4, ui::display_h()*3/4));
+  window.loadLayout();
 
   window.centerWindow();
   window.setVisible(true);
@@ -901,7 +919,7 @@ void KeyboardShortcutsCommand::fillMenusKeys(app::KeyboardShortcuts& keys,
 {
   for (auto child : menu->children()) {
     if (AppMenuItem* menuItem = dynamic_cast<AppMenuItem*>(child)) {
-      if (menuItem == AppMenus::instance()->getRecentListMenuitem())
+      if (menuItem->isRecentFileItem())
         continue;
 
       if (menuItem->getCommand()) {

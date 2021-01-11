@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,12 +9,11 @@
 #include "config.h"
 #endif
 
+#include "app/cmd/background_from_layer.h"
 #include "app/commands/command.h"
 #include "app/context_access.h"
-#include "app/doc_api.h"
 #include "app/modules/gui.h"
 #include "app/tx.h"
-#include "app/ui/color_bar.h"
 #include "doc/layer.h"
 #include "doc/sprite.h"
 
@@ -22,7 +22,6 @@ namespace app {
 class BackgroundFromLayerCommand : public Command {
 public:
   BackgroundFromLayerCommand();
-  Command* clone() const override { return new BackgroundFromLayerCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -53,9 +52,8 @@ void BackgroundFromLayerCommand::onExecute(Context* context)
   Doc* document(writer.document());
 
   {
-    Tx tx(writer.context(), "Background from Layer");
-    document->getApi(tx).backgroundFromLayer(
-      static_cast<LayerImage*>(writer.layer()));
+    Tx tx(writer.context(), friendlyName());
+    tx(new cmd::BackgroundFromLayer(static_cast<LayerImage*>(writer.layer())));
     tx.commit();
   }
 

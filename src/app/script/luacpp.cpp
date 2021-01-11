@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -50,7 +51,9 @@ void create_mt_getters_setters(lua_State* L,
                                const char* tname,
                                const Property* properties)
 {
+#ifdef _DEBUG
   const int top = lua_gettop(L);
+#endif
 
   bool withGetters = false;
   bool withSetters = false;
@@ -88,6 +91,16 @@ void create_mt_getters_setters(lua_State* L,
   lua_pop(L, 1);
 
   ASSERT(lua_gettop(L) == top);
+}
+
+bool lua_is_key_true(lua_State* L, int tableIndex, const char* keyName)
+{
+  bool result = false;
+  int type = lua_getfield(L, tableIndex, keyName);
+  if (type != LUA_TNIL && lua_toboolean(L, -1))
+    result = true;
+  lua_pop(L, 1);
+  return result;
 }
 
 } // namespace script

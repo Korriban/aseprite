@@ -96,6 +96,9 @@ FileFormat detect_format_by_file_extension(const std::string& filename)
       ext == "aseprite")
     return FileFormat::ASE_ANIMATION;
 
+  if (ext == "act")
+    return FileFormat::ACT_PALETTE;
+
   if (ext == "bmp")
     return FileFormat::BMP_IMAGE;
 
@@ -137,6 +140,9 @@ FileFormat detect_format_by_file_extension(const std::string& filename)
 
   if (ext == "tga")
     return FileFormat::TARGA_IMAGE;
+
+  if (ext == "css")
+    return FileFormat::CSS_STYLE;
 
   if (ext == "webp")
     return FileFormat::WEBP_ANIMATION;

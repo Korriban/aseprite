@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -14,11 +15,21 @@ extern "C" {
   #include "lauxlib.h"
 }
 
+#include "base/debug.h"
+
 #include <functional>
 #include <type_traits>
 
 namespace app {
 namespace script {
+
+#if LUA_TNONE != -1
+  #error Invalid LUA_TNONE value
+#endif
+#if LUA_TNIL != 0
+  #error Invalid LUA_TNIL value
+#endif
+#define VALID_LUATYPE(type) ((type) > 0)
 
 // Some of these auxiliary methods are based on code from the Skia
 // library (SkLua.cpp file) by Google Inc.
@@ -26,7 +37,12 @@ namespace script {
 template <typename T> const char* get_mtname();
 #define DEF_MTNAME(T)                         \
   template <> const char* get_mtname<T>() {   \
-    return #T "_Metatable";                   \
+    return #T;                                \
+  }
+
+#define DEF_MTNAME_ALIAS(T, ALIAS)              \
+  template <> const char* get_mtname<ALIAS>() { \
+    return #T;                                  \
   }
 
 template <typename T, typename... Args> T* push_new(lua_State* L, Args&&... args) {
@@ -55,14 +71,18 @@ template <typename T> T* get_ptr(lua_State* L, int index) {
 }
 
 template <typename T> T* get_obj(lua_State* L, int index) {
-  return (T*)luaL_checkudata(L, index, get_mtname<T>());
+  T* ptr = (T*)luaL_checkudata(L, index, get_mtname<T>());
+  ASSERT(typeid(*ptr) == typeid(T));
+  return ptr;
 }
 
 // Returns nil if the index doesn't have the given metatable
 template <typename T> T* may_get_ptr(lua_State* L, int index) {
   T** ptr = (T**)luaL_testudata(L, index, get_mtname<T>());
-  if (ptr)
+  if (ptr) {
+    ASSERT(typeid(**ptr) == typeid(T));
     return *ptr;
+  }
   else
     return nullptr;
 }
@@ -107,6 +127,8 @@ void run_mt_index_code(lua_State* L);
 void create_mt_getters_setters(lua_State* L,
                                const char* tname,
                                const Property* properties);
+
+bool lua_is_key_true(lua_State* L, int tableIndex, const char* keyName);
 
 #define REG_CLASS_PROPERTIES(L, T) {                                \
     luaL_getmetatable(L, get_mtname<T>());                          \

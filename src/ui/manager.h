@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2017  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -11,7 +12,7 @@
 #include "gfx/region.h"
 #include "ui/keys.h"
 #include "ui/message_type.h"
-#include "ui/mouse_buttons.h"
+#include "ui/mouse_button.h"
 #include "ui/pointer_type.h"
 #include "ui/widget.h"
 
@@ -73,7 +74,6 @@ namespace ui {
     void freeMouse();
     void freeCapture();
     void freeWidget(Widget* widget);
-    void removeMessage(Message* msg);
     void removeMessagesFor(Widget* widget);
     void removeMessagesFor(Widget* widget, MessageType type);
     void removeMessagesForTimer(Timer* timer);
@@ -81,8 +81,6 @@ namespace ui {
     void addMessageFilter(int message, Widget* widget);
     void removeMessageFilter(int message, Widget* widget);
     void removeMessageFilterFor(Widget* widget);
-
-    void invalidateDisplayRegion(const gfx::Region& region);
 
     LayoutIO* getLayoutIO();
 
@@ -109,6 +107,7 @@ namespace ui {
 
   protected:
     bool onProcessMessage(Message* msg) override;
+    void onInvalidateRegion(const gfx::Region& region) override;
     void onResize(ResizeEvent& ev) override;
     void onSizeHint(SizeHintEvent& ev) override;
     void onBroadcastMouseMessage(WidgetsList& targets) override;
@@ -122,23 +121,22 @@ namespace ui {
                                   PointerType pointerType);
     void generateMessagesFromOSEvents();
     void handleMouseMove(const gfx::Point& mousePos,
-                         MouseButtons mouseButtons,
-                         KeyModifiers modifiers,
-                         PointerType pointerType);
+                         const KeyModifiers modifiers,
+                         const PointerType pointerType,
+                         const float pressure);
     void handleMouseDown(const gfx::Point& mousePos,
-                         MouseButtons mouseButtons,
+                         MouseButton mouseButton,
                          KeyModifiers modifiers,
                          PointerType pointerType);
     void handleMouseUp(const gfx::Point& mousePos,
-                       MouseButtons mouseButtons,
+                       MouseButton mouseButton,
                        KeyModifiers modifiers,
                        PointerType pointerType);
     void handleMouseDoubleClick(const gfx::Point& mousePos,
-                                MouseButtons mouseButtons,
+                                MouseButton mouseButton,
                                 KeyModifiers modifiers,
                                 PointerType pointerType);
     void handleMouseWheel(const gfx::Point& mousePos,
-                          MouseButtons mouseButtons,
                           KeyModifiers modifiers,
                           PointerType pointerType,
                           const gfx::Point& wheelDelta,
@@ -147,21 +145,23 @@ namespace ui {
                             const KeyModifiers modifiers,
                             const double magnification);
     void handleWindowZOrder();
+    void updateMouseWidgets(const gfx::Point& mousePos);
 
     int pumpQueue();
     bool sendMessageToWidget(Message* msg, Widget* widget);
 
-    static void removeWidgetFromRecipients(Widget* widget, Message* msg);
+    static Widget* findLowestCommonAncestor(Widget* a, Widget* b);
     static bool someParentIsFocusStop(Widget* widget);
     static Widget* findMagneticWidget(Widget* widget);
     static Message* newMouseMessage(
       MessageType type,
       Widget* widget, const gfx::Point& mousePos,
       PointerType pointerType,
-      MouseButtons buttons,
+      MouseButton button,
       KeyModifiers modifiers,
       const gfx::Point& wheelDelta = gfx::Point(0, 0),
-      bool preciseWheel = false);
+      bool preciseWheel = false,
+      float pressure = 0.0f);
     void broadcastKeyMsg(Message* msg);
 
     static Manager* m_defaultManager;
@@ -176,8 +176,8 @@ namespace ui {
     // restack a window if the user clicks on it.
     Widget* m_lockedWindow;
 
-    // Current pressed buttons.
-    MouseButtons m_mouseButtons;
+    // Last pressed mouse button.
+    MouseButton m_mouseButton;
   };
 
 } // namespace ui

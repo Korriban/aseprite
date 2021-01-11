@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -18,6 +18,7 @@
 #include "app/commands/commands.h"
 #include "app/commands/params.h"
 #include "app/doc.h"
+#include "app/tools/active_tool.h"
 #include "app/tools/ink.h"
 #include "app/tools/tool.h"
 #include "app/tools/tool_box.h"
@@ -487,7 +488,7 @@ void KeyboardShortcuts::importFile(TiXmlElement* rootElement, KeySource source)
       if (tool) {
         KeyPtr key = this->tool(tool);
         if (key && tool_key) {
-          LOG(VERBOSE) << "KEYS: Shortcut for tool " << tool_id << ": " << tool_key << "\n";
+          LOG(VERBOSE, "KEYS: Shortcut for tool %s: %s\n", tool_id, tool_key);
           Accelerator accel(tool_key);
 
           if (!removed)
@@ -515,7 +516,7 @@ void KeyboardShortcuts::importFile(TiXmlElement* rootElement, KeySource source)
       if (tool) {
         KeyPtr key = this->quicktool(tool);
         if (key && tool_key) {
-          LOG(VERBOSE) << "KEYS: Shortcut for quicktool " << tool_id << ": " << tool_key << "\n";
+          LOG(VERBOSE, "KEYS: Shortcut for quicktool %s: %s\n", tool_id, tool_key);
           Accelerator accel(tool_key);
 
           if (!removed)
@@ -543,8 +544,7 @@ void KeyboardShortcuts::importFile(TiXmlElement* rootElement, KeySource source)
       if (action != KeyAction::None) {
         KeyPtr key = this->action(action);
         if (key && action_key) {
-          LOG(VERBOSE) << "KEYS: Shortcut for action " << action_id
-                       << ": " << action_key << "\n";
+          LOG(VERBOSE, "KEYS: Shortcut for action %s: %s\n", action_id, action_key);
           Accelerator accel(action_key);
 
           if (!removed)
@@ -572,8 +572,7 @@ void KeyboardShortcuts::importFile(TiXmlElement* rootElement, KeySource source)
       if (action != WheelAction::None) {
         KeyPtr key = this->wheelAction(action);
         if (key && action_key) {
-          LOG(VERBOSE) << "KEYS: Shortcut for wheel action " << action_id
-                       << ": " << action_key << "\n";
+          LOG(VERBOSE, "KEYS: Shortcut for wheel action %s: %s\n", action_id, action_key);
           Accelerator accel(action_key);
 
           if (!removed)
@@ -792,10 +791,20 @@ void KeyboardShortcuts::disableAccel(const ui::Accelerator& accel,
 KeyContext KeyboardShortcuts::getCurrentKeyContext()
 {
   Doc* doc = UIContext::instance()->activeDocument();
-
   if (doc &&
       doc->isMaskVisible() &&
-      App::instance()->activeTool()->getInk(0)->isSelection())
+      // The active key context will be the selectedTool() (in the
+      // toolbox) instead of the activeTool() (which depends on the
+      // quick tool shortcuts).
+      //
+      // E.g. If we have the rectangular marquee tool selected
+      // (selectedTool()) are going to press keys like alt+left or
+      // alt+right to move the selection edge in the selection
+      // context, the alt key switches the activeTool() to the
+      // eyedropper, but we want to use alt+left and alt+right in the
+      // original context (the selection tool).
+      App::instance()->activeToolManager()
+        ->selectedTool()->getInk(0)->isSelection())
     return KeyContext::SelectionTool;
   else
     return KeyContext::Normal;

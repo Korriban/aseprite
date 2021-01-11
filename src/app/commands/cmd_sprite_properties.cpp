@@ -16,6 +16,7 @@
 #include "app/commands/command.h"
 #include "app/context_access.h"
 #include "app/doc_api.h"
+#include "app/i18n/strings.h"
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
 #include "app/tx.h"
@@ -40,7 +41,6 @@ using namespace ui;
 class SpritePropertiesCommand : public Command {
 public:
   SpritePropertiesCommand();
-  Command* clone() const override { return new SpritePropertiesCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -70,6 +70,14 @@ void SpritePropertiesCommand::onExecute(Context* context)
   // Load the window widget
   app::gen::SpriteProperties window;
   int selectedColorProfile = -1;
+
+  auto updateButtons =
+    [&] {
+      bool enabled = (selectedColorProfile != window.colorProfile()->getSelectedItemIndex());
+      window.assignColorProfile()->setEnabled(enabled);
+      window.convertColorProfile()->setEnabled(enabled);
+      window.ok()->setEnabled(!enabled);
+    };
 
   // Get sprite properties and fill frame fields
   {
@@ -117,6 +125,14 @@ void SpritePropertiesCommand::onExecute(Context* context)
                                      ColorButtonOptions());
 
       window.transparentColorPlaceholder()->addChild(color_button);
+
+      // TODO add a way to get or create an existent TooltipManager
+      TooltipManager* tooltipManager = new TooltipManager;
+      window.addChild(tooltipManager);
+      tooltipManager->addTooltipFor(
+        color_button,
+        Strings::sprite_properties_transparent_color_tooltip(),
+        LEFT);
     }
     else {
       window.transparentColorPlaceholder()->addChild(new Label("(only for indexed images)"));
@@ -144,14 +160,6 @@ void SpritePropertiesCommand::onExecute(Context* context)
     for (auto& cs : colorSpaces)
       window.colorProfile()->addItem(cs->gfxColorSpace()->name());
     window.colorProfile()->setSelectedItemIndex(selectedColorProfile);
-
-    auto updateButtons =
-      [&] {
-        bool enabled = (selectedColorProfile != window.colorProfile()->getSelectedItemIndex());
-        window.assignColorProfile()->setEnabled(enabled);
-        window.convertColorProfile()->setEnabled(enabled);
-        window.ok()->setEnabled(!enabled);
-      };
 
     window.assignColorProfile()->setEnabled(false);
     window.convertColorProfile()->setEnabled(false);

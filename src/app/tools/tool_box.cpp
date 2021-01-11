@@ -1,5 +1,5 @@
 // Aseprite
-// Copyright (C) 2018  Igara Studio S.A.
+// Copyright (C) 2018-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -56,6 +56,7 @@ const char* WellKnownInks::Selection = "selection";
 const char* WellKnownInks::Paint = "paint";
 const char* WellKnownInks::PaintFg = "paint_fg";
 const char* WellKnownInks::PaintBg = "paint_bg";
+const char* WellKnownInks::PaintAlphaCompositing = "paint_alpha_compositing";
 const char* WellKnownInks::PaintCopy = "paint_copy";
 const char* WellKnownInks::PaintLockAlpha = "paint_lock_alpha";
 const char* WellKnownInks::Shading = "shading";
@@ -115,6 +116,7 @@ ToolBox::ToolBox()
   m_inks[WellKnownInks::Paint]           = new PaintInk(PaintInk::Simple);
   m_inks[WellKnownInks::PaintFg]         = new PaintInk(PaintInk::WithFg);
   m_inks[WellKnownInks::PaintBg]         = new PaintInk(PaintInk::WithBg);
+  m_inks[WellKnownInks::PaintAlphaCompositing] = new PaintInk(PaintInk::AlphaCompositing);
   m_inks[WellKnownInks::PaintCopy]       = new PaintInk(PaintInk::Copy);
   m_inks[WellKnownInks::PaintLockAlpha]  = new PaintInk(PaintInk::LockAlpha);
   m_inks[WellKnownInks::Gradient]        = new GradientInk();
@@ -214,7 +216,7 @@ void ToolBox::loadTools()
     if (!groupId)
       throw base::Exception("The configuration file has a <group> without 'id' or 'text' attributes.");
 
-    LOG(VERBOSE) << "TOOL: Group " << groupId << "\n";
+    LOG(VERBOSE, "TOOL: %s group\n", groupId);
 
     // Find an existent ToolGroup (this is useful in case we are
     // reloading tool text/tooltips).
@@ -256,7 +258,7 @@ void ToolBox::loadTools()
       tool->setDefaultBrushSize(
         defaultBrushSize ? std::strtol(defaultBrushSize, nullptr, 10): 1);
 
-      LOG(VERBOSE) << "TOOL: Tool " << toolId << " in group " << groupId << " found\n";
+      LOG(VERBOSE, "TOOL: %s.%s tool\n", groupId, toolId);
 
       loadToolProperties(xmlTool, tool, 0, "left");
       loadToolProperties(xmlTool, tool, 1, "right");

@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -24,9 +25,11 @@ namespace app {
 using namespace doc;
 
 // TODO the DocRange should be "iteratable" to replace this function
-CelList get_unlocked_unique_cels(Sprite* sprite, const DocRange& inrange)
+static CelList get_cels_templ(const Sprite* sprite,
+                              DocRange range,
+                              const bool onlyUniqueCels,
+                              const bool onlyUnlockedCel)
 {
-  DocRange range = inrange;
   CelList cels;
   if (!range.convertToCels(sprite))
     return cels;
@@ -36,7 +39,7 @@ CelList get_unlocked_unique_cels(Sprite* sprite, const DocRange& inrange)
   for (Layer* layer : range.selectedLayers()) {
     if (!layer ||
         !layer->isImage() ||
-        !layer->isEditable())
+        (onlyUnlockedCel && !layer->isEditableHierarchy()))
       continue;
 
     LayerImage* layerImage = static_cast<LayerImage*>(layer);
@@ -45,13 +48,31 @@ CelList get_unlocked_unique_cels(Sprite* sprite, const DocRange& inrange)
       if (!cel)
         continue;
 
-      if (visited.find(cel->data()->id()) == visited.end()) {
-        visited.insert(cel->data()->id());
+      if (!onlyUniqueCels ||
+          visited.find(cel->data()->id()) == visited.end()) {
+        if (onlyUniqueCels)
+          visited.insert(cel->data()->id());
+
         cels.push_back(cel);
       }
     }
   }
   return cels;
+}
+
+CelList get_cels(const doc::Sprite* sprite, const DocRange& range)
+{
+  return get_cels_templ(sprite, range, false, false);
+}
+
+CelList get_unique_cels(const Sprite* sprite, const DocRange& range)
+{
+  return get_cels_templ(sprite, range, true, false);
+}
+
+CelList get_unlocked_unique_cels(const Sprite* sprite, const DocRange& range)
+{
+  return get_cels_templ(sprite, range, true, true);
 }
 
 } // namespace app

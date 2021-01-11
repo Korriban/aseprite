@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -119,13 +120,24 @@ void BrushPreview::show(const gfx::Point& screenPos)
   // Get the current tool
   tools::Ink* ink = m_editor->getCurrentEditorInk();
 
-  bool isFloodfill = m_editor->getCurrentEditorTool()->getPointShape(0)->isFloodFill();
+  const bool isFloodfill = m_editor->getCurrentEditorTool()->getPointShape(0)->isFloodFill();
+  const auto& dynamics = App::instance()->contextBar()->getDynamics();
 
   // Setup the cursor type depending on several factors (current tool,
   // foreground color, layer transparency, brush size, etc.).
   BrushRef brush = getCurrentBrush();
   color_t brush_color = getBrushColor(sprite, layer);
   color_t mask_index = sprite->transparentColor();
+
+  if (brush->type() != doc::kImageBrushType &&
+      (dynamics.size != tools::DynamicSensor::Static ||
+       dynamics.angle != tools::DynamicSensor::Static)) {
+    brush.reset(
+      new Brush(
+        brush->type(),
+        (dynamics.size != tools::DynamicSensor::Static ? dynamics.minSize: brush->size()),
+        (dynamics.angle != tools::DynamicSensor::Static ? dynamics.minAngle: brush->angle())));
+  }
 
   if (ink->isSelection() || ink->isSlice()) {
     m_type = SELECTION_CROSSHAIR;
@@ -137,7 +149,7 @@ void BrushPreview::show(const gfx::Point& screenPos)
      (ink->isEffect()) ||
      // or when the brush color is transparent and we are not in the background layer
      (!ink->isShading() &&
-      (layer && !layer->isBackground()) &&
+      (layer && layer->isTransparent()) &&
       ((sprite->pixelFormat() == IMAGE_INDEXED && brush_color == mask_index) ||
        (sprite->pixelFormat() == IMAGE_RGB && rgba_geta(brush_color) == 0) ||
        (sprite->pixelFormat() == IMAGE_GRAYSCALE && graya_geta(brush_color) == 0))))) {
@@ -148,6 +160,8 @@ void BrushPreview::show(const gfx::Point& screenPos)
   }
 
   bool showPreview = false;
+  bool showPreviewWithEdges = false;
+  bool cancelEdges = false;
   auto brushPreview = pref.cursor.brushPreview();
   if (!m_editor->docPref().show.brushPreview())
     brushPreview = app::gen::BrushPreview::NONE;
@@ -160,12 +174,34 @@ void BrushPreview::show(const gfx::Point& screenPos)
       m_type = BRUSH_BOUNDARIES;
       break;
     case app::gen::BrushPreview::FULL:
+    case app::gen::BrushPreview::FULLALL:
+    case app::gen::BrushPreview::FULLNEDGES:
       showPreview = m_editor->getState()->requireBrushPreview();
+      switch (brushPreview) {
+        case app::gen::BrushPreview::FULLALL:
+          if (showPreview)
+            m_type = CROSSHAIR;
+          cancelEdges = true;
+          break;
+        case app::gen::BrushPreview::FULLNEDGES:
+          if (showPreview)
+            showPreviewWithEdges = true;
+          break;
+      }
       break;
   }
 
   if (m_type & SELECTION_CROSSHAIR)
     showPreview = false;
+
+  // When the extra cel is locked (e.g. we are flashing the active
+  // layer) we don't show the brush preview temporally.
+  if (showPreview && m_editor->isExtraCelLocked()) {
+    showPreview = false;
+    showPreviewWithEdges = false;
+    cancelEdges = false;
+    m_type |= BRUSH_BOUNDARIES;
+  }
 
   // Use a simple cross
   if (pref.cursor.paintingCursorType() == gen::PaintingCursorType::SIMPLE_CROSSHAIR) {
@@ -175,9 +211,13 @@ void BrushPreview::show(const gfx::Point& screenPos)
 
   // For cursor type 'bounds' we have to generate cursor boundaries
   if (m_type & BRUSH_BOUNDARIES) {
-    showPreview = false;
-    generateBoundaries();
+    if (brush->type() != kImageBrushType)
+      showPreview = showPreviewWithEdges;
+    if (cancelEdges)
+      m_type &= ~BRUSH_BOUNDARIES;
   }
+  if (m_type & BRUSH_BOUNDARIES)
+    generateBoundaries();
 
   // Draw pixel/brush preview
   if (showPreview) {
@@ -242,17 +282,19 @@ void BrushPreview::show(const gfx::Point& screenPos)
     {
       std::unique_ptr<tools::ToolLoop> loop(
         create_tool_loop_preview(
-          m_editor, extraImage,
+          m_editor, brush, extraImage,
           extraCelBounds.origin()));
       if (loop) {
         loop->getInk()->prepareInk(loop.get());
         loop->getController()->prepareController(loop.get());
         loop->getIntertwine()->prepareIntertwine();
         loop->getPointShape()->preparePointShape(loop.get());
-        loop->getPointShape()->transformPoint(
-          loop.get(),
-          brushBounds.x-origBrushBounds.x,
-          brushBounds.y-origBrushBounds.y);
+
+        tools::Stroke::Pt pt(brushBounds.x-origBrushBounds.x,
+                             brushBounds.y-origBrushBounds.y);
+        pt.size = brush->size();
+        pt.angle = brush->angle();
+        loop->getPointShape()->transformPoint(loop.get(), pt);
       }
     }
 
@@ -360,11 +402,11 @@ void BrushPreview::generateBoundaries()
 {
   BrushRef brush = getCurrentBrush();
 
-  if (m_brushBoundaries &&
+  if (!m_brushBoundaries.isEmpty() &&
       m_brushGen == brush->gen())
     return;
 
-  bool isOnePixel =
+  const bool isOnePixel =
     (m_editor->getCurrentEditorTool()->getPointShape(0)->isPixel() ||
      m_editor->getCurrentEditorTool()->getPointShape(0)->isFloodFill());
   Image* brushImage = brush->image();
@@ -387,8 +429,10 @@ void BrushPreview::generateBoundaries()
     mask = brush->maskBitmap();
   }
 
-  m_brushBoundaries.reset(
-    new MaskBoundaries(mask ? mask: brushImage));
+  m_brushBoundaries.regen(mask ? mask: brushImage);
+  if (!isOnePixel)
+    m_brushBoundaries.offset(-brush->center().x,
+                             -brush->center().y);
 
   if (deleteMask)
     delete mask;
@@ -497,10 +541,7 @@ void BrushPreview::traceBrushBoundaries(ui::Graphics* g,
                                         gfx::Color color,
                                         PixelDelegate pixelDelegate)
 {
-  pos.x -= m_brushWidth/2;
-  pos.y -= m_brushHeight/2;
-
-  for (const auto& seg : *m_brushBoundaries) {
+  for (const auto& seg : m_brushBoundaries) {
     gfx::Rect bounds = seg.bounds();
     bounds.offset(pos);
     bounds = m_editor->editorToScreen(bounds);

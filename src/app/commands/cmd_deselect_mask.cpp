@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -21,7 +22,6 @@ namespace app {
 class DeselectMaskCommand : public Command {
 public:
   DeselectMaskCommand();
-  Command* clone() const override { return new DeselectMaskCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -48,7 +48,6 @@ void DeselectMaskCommand::onExecute(Context* context)
     tx(new cmd::DeselectMask(document));
     tx.commit();
   }
-  document->generateMaskBoundaries();
   update_screen_for_document(document);
 }
 

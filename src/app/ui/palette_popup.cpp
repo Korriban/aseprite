@@ -42,6 +42,7 @@ PalettePopup::PalettePopup()
   addChild(m_popup);
 
   m_paletteListBox.DoubleClickItem.connect(base::Bind<void>(&PalettePopup::onLoadPal, this));
+  m_paletteListBox.FinishLoading.connect(base::Bind<void>(&PalettePopup::onSearchChange, this));
   m_popup->search()->Change.connect(base::Bind<void>(&PalettePopup::onSearchChange, this));
   m_popup->loadPal()->Click.connect(base::Bind<void>(&PalettePopup::onLoadPal, this));
   m_popup->openFolder()->Click.connect(base::Bind<void>(&PalettePopup::onOpenFolder, this));
@@ -111,7 +112,7 @@ void PalettePopup::onLoadPal()
   SetPaletteCommand* cmd = static_cast<SetPaletteCommand*>(
     Commands::instance()->byId(CommandId::SetPalette()));
   cmd->setPalette(palette);
-  UIContext::instance()->executeCommand(cmd);
+  UIContext::instance()->executeCommandFromMenuOrShortcut(cmd);
 
   m_paletteListBox.requestFocus();
 }

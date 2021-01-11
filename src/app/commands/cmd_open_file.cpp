@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -20,6 +21,7 @@
 #include "app/job.h"
 #include "app/modules/editors.h"
 #include "app/modules/gui.h"
+#include "app/pref/preferences.h"
 #include "app/recent_files.h"
 #include "app/ui/status_bar.h"
 #include "app/ui_context.h"
@@ -85,8 +87,8 @@ void OpenFileCommand::onLoadParams(const Params& params)
 {
   m_filename = params.get("filename");
   m_folder = params.get("folder"); // Initial folder
-  m_repeatCheckbox = (params.get("repeat_checkbox") == "true");
-  m_oneFrame = (params.get("oneframe") == "true");
+  m_repeatCheckbox = params.get_as<bool>("repeat_checkbox");
+  m_oneFrame = params.get_as<bool>("oneframe");
 
   std::string sequence = params.get("sequence");
   if (m_oneFrame || sequence == "skip")
@@ -121,6 +123,12 @@ void OpenFileCommand::onExecute(Context* context)
       // The user cancelled the operation through UI
       return;
     }
+
+    // If the user selected several files, show the checkbox to repeat
+    // the action for future filenames in the batch of selected files
+    // to open.
+    if (filenames.size() > 1)
+      m_repeatCheckbox = true;
   }
   else
 #endif // ENABLE_UI
@@ -133,6 +141,7 @@ void OpenFileCommand::onExecute(Context* context)
 
   int flags =
     FILE_LOAD_DATA_FILE |
+    FILE_LOAD_CREATE_PALETTE |
     (m_repeatCheckbox ? FILE_LOAD_SEQUENCE_ASK_CHECKBOX: 0);
 
   switch (m_seqDecision) {
@@ -150,7 +159,11 @@ void OpenFileCommand::onExecute(Context* context)
   if (m_oneFrame)
     flags |= FILE_LOAD_ONE_FRAME;
 
-  for (const auto& filename : filenames) {
+  std::string filename;
+  while (!filenames.empty()) {
+    filename = filenames[0];
+    filenames.erase(filenames.begin());
+
     std::unique_ptr<FileOp> fop(
       FileOp::createLoadDocumentOperation(
         context, filename, flags));
@@ -166,18 +179,29 @@ void OpenFileCommand::onExecute(Context* context)
     }
     else {
       if (fop->isSequence()) {
-
         if (fop->sequenceFlags() & FILE_LOAD_SEQUENCE_YES) {
           m_seqDecision = SequenceDecision::Agree;
+          flags &= ~FILE_LOAD_SEQUENCE_ASK;
+          flags |= FILE_LOAD_SEQUENCE_YES;
         }
         else if (fop->sequenceFlags() & FILE_LOAD_SEQUENCE_NONE) {
           m_seqDecision = SequenceDecision::Skip;
+          flags &= ~FILE_LOAD_SEQUENCE_ASK;
+          flags |= FILE_LOAD_SEQUENCE_NONE;
         }
 
-        m_usedFiles = fop->filenames();
+        for (std::string fn : fop->filenames()) {
+          fn = base::normalize_path(fn);
+          m_usedFiles.push_back(fn);
+
+          auto it = std::find(filenames.begin(), filenames.end(), fn);
+          if (it != filenames.end())
+            filenames.erase(it);
+        }
       }
       else {
-        m_usedFiles.push_back(fop->filename());
+        auto fn = base::normalize_path(fop->filename());
+        m_usedFiles.push_back(fn);
       }
 
       OpenFileJob task(fop.get());
@@ -190,12 +214,27 @@ void OpenFileCommand::onExecute(Context* context)
       if (fop->hasError() && !fop->isStop())
         console.printf(fop->error().c_str());
 
-      Doc* document = fop->document();
-      if (document) {
-        if (context->isUIAvailable())
+      Doc* doc = fop->document();
+      if (doc) {
+        if (context->isUIAvailable()) {
           App::instance()->recentFiles()->addRecentFile(fop->filename().c_str());
+          auto& docPref = Preferences::instance().document(doc);
 
-        document->setContext(context);
+          if (fop->hasEmbeddedGridBounds() &&
+              !doc->sprite()->gridBounds().isEmpty()) {
+            // If the sprite contains the grid bounds inside, we put
+            // those grid bounds into the settings (e.g. useful to
+            // interact with old versions of Aseprite saving the grid
+            // bounds in the aseprite.ini file)
+            docPref.grid.bounds(doc->sprite()->gridBounds());
+          }
+          else {
+            // Get grid bounds from preferences
+            doc->sprite()->setGridBounds(docPref.grid.bounds());
+          }
+        }
+
+        doc->setContext(context);
       }
       else if (!fop->isStop())
         unrecent = true;

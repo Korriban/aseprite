@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -30,19 +31,9 @@
 
 namespace app {
 
-class ConsoleEngineDelegate : public script::EngineDelegate {
-public:
-  void onConsolePrint(const char* text) override {
-    m_console.printf("%s\n", text);
-  }
-private:
-  Console m_console;
-};
-
 class RunScriptCommand : public Command {
 public:
   RunScriptCommand();
-  Command* clone() const override { return new RunScriptCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -51,6 +42,7 @@ protected:
 
 private:
   std::string m_filename;
+  Params m_params;
 };
 
 RunScriptCommand::RunScriptCommand()
@@ -67,6 +59,8 @@ void RunScriptCommand::onLoadParams(const Params& params)
     if (rf.findFirst())
       m_filename = rf.filename();
   }
+
+  m_params = params;
 }
 
 void RunScriptCommand::onExecute(Context* context)
@@ -82,12 +76,10 @@ void RunScriptCommand::onExecute(Context* context)
   }
 #endif // ENABLE_UI
 
-  script::Engine* engine = App::instance()->scriptEngine();
-  {
-    ConsoleEngineDelegate delegate;
-    script::ScopedEngineDelegate scoped(engine, &delegate);
-    engine->evalFile(m_filename);
-  }
+  App::instance()
+    ->scriptEngine()
+    ->evalFile(m_filename, m_params);
+
   ui::Manager::getDefault()->invalidate();
 }
 

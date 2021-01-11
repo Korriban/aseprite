@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018-2019  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,9 +9,12 @@
 #include "config.h"
 #endif
 
+#include "app/script/docobj.h"
 #include "app/script/engine.h"
 #include "app/script/luacpp.h"
+#include "base/string.h"
 #include "doc/layer.h"
+#include "doc/object_ids.h"
 #include "doc/sprite.h"
 
 namespace app {
@@ -21,12 +25,20 @@ using namespace doc;
 namespace {
 
 struct LayersObj {
-  Sprite* sprite;
-  LayerList layers;
-  LayersObj(Sprite* sprite)
-    : sprite(sprite),
-      layers(sprite->allLayers()) {
+  ObjectIds layers;
+
+  LayersObj(Sprite* sprite) {
+    for (const Layer* layer : sprite->root()->layers())
+      layers.push_back(layer->id());
   }
+  LayersObj(LayerGroup* group) {
+    for (const Layer* layer : group->layers())
+      layers.push_back(layer->id());
+  }
+  LayersObj(const ObjectIds& layers)
+    : layers(layers) {
+  }
+
   LayersObj(const LayersObj&) = delete;
   LayersObj& operator=(const LayersObj&) = delete;
 };
@@ -47,9 +59,24 @@ int Layers_len(lua_State* L)
 int Layers_index(lua_State* L)
 {
   auto obj = get_obj<LayersObj>(L, 1);
+
+  // Index by layer name
+  if (lua_isstring(L, 2)) {
+    if (const char* name = lua_tostring(L, 2)) {
+      for (ObjectId layerId : obj->layers) {
+        Layer* layer = doc::get<Layer>(layerId);
+        if (layer &&
+            base::utf8_icmp(layer->name(), name) == 0) {
+          push_docobj<Layer>(L, layerId);
+          return 1;
+        }
+      }
+    }
+  }
+
   const int i = lua_tonumber(L, 2);
   if (i >= 1 && i <= int(obj->layers.size()))
-    push_ptr<Layer>(L, obj->layers[i-1]);
+    push_docobj<Layer>(L, obj->layers[i-1]);
   else
     lua_pushnil(L);
   return 1;
@@ -75,6 +102,16 @@ void register_layers_class(lua_State* L)
 void push_sprite_layers(lua_State* L, Sprite* sprite)
 {
   push_new<LayersObj>(L, sprite);
+}
+
+void push_group_layers(lua_State* L, LayerGroup* group)
+{
+  push_new<LayersObj>(L, group);
+}
+
+void push_layers(lua_State* L, const ObjectIds& layers)
+{
+  push_new<LayersObj>(L, layers);
 }
 
 } // namespace script

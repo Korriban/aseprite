@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -32,7 +33,6 @@ namespace app {
 class MaskContentCommand : public Command {
 public:
   MaskContentCommand();
-  Command* clone() const override { return new MaskContentCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -84,10 +84,8 @@ void MaskContentCommand::onExecute(Context* context)
 
     Tx tx(writer.context(), "Select Content", DoesntModifyDocument);
     tx(new cmd::SetMask(document, &newMask));
-    tx.commit();
-
     document->resetTransformation();
-    document->generateMaskBoundaries();
+    tx.commit();
   }
 
   // Select marquee tool

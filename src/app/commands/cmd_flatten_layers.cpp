@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019 Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -25,7 +26,6 @@ namespace app {
 class FlattenLayersCommand : public Command {
 public:
   FlattenLayersCommand();
-  Command* clone() const override { return new FlattenLayersCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -44,8 +44,7 @@ FlattenLayersCommand::FlattenLayersCommand()
 
 void FlattenLayersCommand::onLoadParams(const Params& params)
 {
-  std::string visibleOnly = params.get("visibleOnly");
-  m_visibleOnly = (visibleOnly == "true");
+  m_visibleOnly = params.get_as<bool>("visibleOnly");
 }
 
 bool FlattenLayersCommand::onEnabled(Context* context)
@@ -83,8 +82,10 @@ void FlattenLayersCommand::onExecute(Context* context)
           range.selectLayer(layer);
       }
     }
-
-    tx(new cmd::FlattenLayers(sprite, range.selectedLayers()));
+    const bool newBlend = Preferences::instance().experimental.newBlend();
+    tx(new cmd::FlattenLayers(sprite,
+                              range.selectedLayers(),
+                              newBlend));
     tx.commit();
   }
 

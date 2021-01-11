@@ -1,4 +1,5 @@
 // Aseprite UI Library
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This file is released under the terms of the MIT license.
@@ -13,6 +14,7 @@
 #include "os/display.h"
 #include "os/surface.h"
 #include "os/system.h"
+#include "ui/overlay_manager.h"
 
 #include <vector>
 
@@ -27,13 +29,17 @@ void move_region(Manager* manager, const Region& region, int dx, int dy)
   if (!display)
     return;
 
+  auto overlays = ui::OverlayManager::instance();
+  gfx::Rect bounds = region.bounds();
+  bounds |= gfx::Rect(bounds).offset(dx, dy);
+  overlays->restoreOverlappedAreas(bounds);
+
   os::Surface* surface = display->getSurface();
   os::SurfaceLock lock(surface);
-  std::size_t nrects = region.size();
 
   // Fast path, move one rectangle.
-  if (nrects == 1) {
-    gfx::Rect rc = region[0];
+  if (region.isRect()) {
+    gfx::Rect rc = region.bounds();
     surface->scrollTo(rc, dx, dy);
 
     rc.offset(dx, dy);
@@ -43,7 +49,8 @@ void move_region(Manager* manager, const Region& region, int dx, int dy)
   // through the y-axis, we can sort the rectangles by y-axis and then
   // by x-axis to move rectangle by rectangle depending on the dx/dy
   // direction so we don't overlap each rectangle.
-  else if (nrects > 1) {
+  else if (region.isComplex()) {
+    std::size_t nrects = region.size();
     std::vector<gfx::Rect> rcs(nrects);
     std::copy(region.begin(), region.end(), rcs.begin());
 
@@ -83,6 +90,8 @@ void move_region(Manager* manager, const Region& region, int dx, int dy)
       manager->dirtyRect(rc);
     }
   }
+
+  overlays->drawOverlays();
 }
 
 } // namespace ui

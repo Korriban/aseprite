@@ -32,7 +32,7 @@ because they don't depend on any other component.
 
 ## Level 2
 
-  * [doc](doc/) (base, fixmath, gfx, os): Document model library.
+  * [doc](doc/) (base, fixmath, gfx): Document model library.
   * [ui](ui/) (base, gfx, os): Portable UI library (buttons, windows, text fields, etc.)
   * [updater](updater/) (base, cfg, net): Component to check for updates.
 
@@ -65,6 +65,11 @@ following extra commands/features available:
   recovery store.
 * `aseprite.ini`: `[perf] show_render_time=true` shows a performance
   clock in the Editor.
+
+In Debug mode (`_DEBUG`):
+
+* [`TRACEARGS`](https://github.com/aseprite/laf/blob/f3222bdee2d21556e9da55343e73803c730ecd97/base/debug.h#L40):
+  in debug mode, it prints in the terminal/console each given argument
 
 # Detect Platform
 

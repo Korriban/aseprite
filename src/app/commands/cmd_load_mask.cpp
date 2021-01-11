@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -29,7 +30,6 @@ class LoadMaskCommand : public Command {
 
 public:
   LoadMaskCommand();
-  Command* clone() const override { return new LoadMaskCommand(*this); }
 
 protected:
   void onLoadParams(const Params& params) override;
@@ -81,7 +81,6 @@ void LoadMaskCommand::onExecute(Context* context)
     tx(new cmd::SetMask(document, mask.get()));
     tx.commit();
 
-    document->generateMaskBoundaries();
     update_screen_for_document(document);
   }
 }

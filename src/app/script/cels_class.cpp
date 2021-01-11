@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2018  Igara Studio S.A.
 // Copyright (C) 2018  David Capello
 //
 // This program is distributed under the terms of
@@ -8,9 +9,12 @@
 #include "config.h"
 #endif
 
+#include "app/script/docobj.h"
 #include "app/script/luacpp.h"
+#include "doc/cel.h"
 #include "doc/cels_range.h"
 #include "doc/layer.h"
+#include "doc/object_ids.h"
 #include "doc/sprite.h"
 
 #include <algorithm>
@@ -24,11 +28,18 @@ using namespace doc;
 namespace {
 
 struct CelsObj {
-  CelList cels;
-  CelsObj(CelsRange&& range) {
-    std::copy(range.begin(), range.end(), std::back_inserter(cels));
+  ObjectIds cels;
+  CelsObj(CelsRange& range) {
+    for (const Cel* cel : range)
+      cels.push_back(cel->id());
   }
-  CelsObj(CelList&& cels) : cels(std::move(cels)) { }
+  CelsObj(CelList& list) {
+    for (Cel* cel : list)
+      cels.push_back(cel->id());
+  }
+  CelsObj(const ObjectIds& cels)
+    : cels(cels) {
+  }
   CelsObj(const CelsObj&) = delete;
   CelsObj& operator=(const CelsObj&) = delete;
 };
@@ -51,7 +62,7 @@ int Cels_index(lua_State* L)
   auto obj = get_obj<CelsObj>(L, 1);
   const int i = lua_tointeger(L, 2);
   if (i >= 1 && i <= obj->cels.size())
-    push_ptr<Cel>(L, obj->cels[i-1]);
+    push_docobj<Cel>(L, obj->cels[i-1]);
   else
     lua_pushnil(L);
   return 1;
@@ -74,17 +85,23 @@ void register_cels_class(lua_State* L)
   REG_CLASS(L, Cels);
 }
 
-void push_sprite_cels(lua_State* L, Sprite* sprite)
+void push_cels(lua_State* L, Sprite* sprite)
 {
-  push_new<CelsObj>(L, sprite->cels());
+  CelsRange cels = sprite->cels();
+  push_new<CelsObj>(L, cels);
 }
 
-void push_layer_cels(lua_State* L, Layer* layer)
+void push_cels(lua_State* L, Layer* layer)
 {
   CelList cels;
   if (layer->isImage())
     static_cast<LayerImage*>(layer)->getCels(cels);
-  push_new<CelsObj>(L, std::move(cels));
+  push_new<CelsObj>(L, cels);
+}
+
+void push_cels(lua_State* L, const ObjectIds& cels)
+{
+  push_new<CelsObj>(L, cels);
 }
 
 } // namespace script

@@ -77,17 +77,18 @@ private:
 
 ## C++11
 
-We are using some C++11 features, mainly:
+We are using some modern C++ (C++11, C++14, etc.) features, mainly:
 
 * Use `nullptr` instead of `NULL` macro
-* Use `auto` for complex types, iterators, or when it's variable type
-  obvious (e.g. `auto s = new Sprite;`)
+* Use `auto` for complex types, iterators, or when the variable type
+  is obvious (e.g. `auto s = new Sprite;`)
 * Use range-based for loops (`for (const auto& item : values) { ... }`)
 * Use template alias (`template<typename T> alias = orig<T>;`)
 * Use non-generic lambda functions
-* Use `std::shared_ptr` and `std::unique_ptr` (currently we're using
-  `base::SharedPtr` and `base::UniquePtr` but you should use the STL
-  ones now)
+* Use `std::shared_ptr` and `std::unique_ptr`
+* Use `base::clamp` (no `std::clamp` yet)
+* Use `static constexpr T v = ...;`
 * You can use `<atomic>`, `<thread>`, `<mutex>`, and `<condition_variable>`
-* We use GCC 4.8 on Linux, so check the features available since GCC 4.8 in
+* We can use `using T = ...;` instead of `typedef ... T`
+* We use gcc 9.2 or clang 9.0 on Linux, so check the features available in
   https://developer.mozilla.org/en-US/docs/Mozilla/Using_CXX_in_Mozilla_code

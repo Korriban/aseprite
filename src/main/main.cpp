@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2016  David Capello
 //
 // This program is distributed under the terms of
@@ -43,6 +44,22 @@ namespace {
 #endif
   };
 
+#ifdef _WIN32
+  // Successful calls to CoInitialize() (S_OK or S_FALSE) must match
+  // the calls to CoUninitialize().
+  // From: https://docs.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-couninitialize#remarks
+  struct CoInit {
+    HRESULT hr;
+    CoInit() {
+      hr = CoInitialize(nullptr);
+    }
+    ~CoInit() {
+      if (hr == S_OK || hr == S_FALSE)
+        CoUninitialize();
+    }
+  };
+#endif
+
 }
 
 // Aseprite entry point. (Called from "os" library.)
@@ -58,7 +75,7 @@ int app_main(int argc, char* argv[])
   std::srand(static_cast<unsigned int>(std::time(nullptr)));
 
 #ifdef _WIN32
-  ::CoInitialize(NULL);
+  CoInit com;                   // To create COM objects
 #endif
 
   try {
@@ -69,14 +86,17 @@ int app_main(int argc, char* argv[])
     os::ScopedHandle<os::System> system(os::create_system());
     app::App app;
 
-    // Change the name of the memory dump file
+    // Change the memory dump filename to save on disk (.dmp
+    // file). Note: Only useful on Windows.
     {
-      std::string filename = app::memory_dump_filename();
-      if (!filename.empty())
-        memoryDump.setFileName(filename);
+      const std::string fn = app::SendCrash::DefaultMemoryDumpFilename();
+      if (!fn.empty())
+        memoryDump.setFileName(fn);
     }
 
-    app.initialize(options);
+    const int code = app.initialize(options);
+    if (code != 0)
+      return code;
 
     if (options.startShell())
       systemConsole.prepareShell();

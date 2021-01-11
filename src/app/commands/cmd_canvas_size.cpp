@@ -1,4 +1,5 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
@@ -9,6 +10,7 @@
 #endif
 
 #include "app/commands/command.h"
+#include "app/commands/new_params.h"
 #include "app/context_access.h"
 #include "app/doc_api.h"
 #include "app/modules/editors.h"
@@ -16,10 +18,13 @@
 #include "app/tx.h"
 #include "app/ui/button_set.h"
 #include "app/ui/color_bar.h"
+#include "app/ui/doc_view.h"
 #include "app/ui/editor/editor.h"
 #include "app/ui/editor/select_box_state.h"
 #include "app/ui/skin/skin_theme.h"
+#include "app/ui_context.h"
 #include "base/bind.h"
+#include "base/clamp.h"
 #include "doc/image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
@@ -37,6 +42,18 @@ using namespace app::skin;
 #pragma warning(disable:4355)
 #endif
 
+struct CanvasSizeParams : public NewParams {
+  Param<bool> ui { this, true, "ui" };
+  Param<int> left { this, 0, "left" };
+  Param<int> right { this, 0, "right" };
+  Param<int> top { this, 0, "top" };
+  Param<int> bottom { this, 0, "bottom" };
+  Param<gfx::Rect> bounds { this, gfx::Rect(0, 0, 0, 0), "bounds" };
+  Param<bool> trimOutside { this, false, "trimOutside" };
+};
+
+#ifdef ENABLE_UI
+
 // Window used to show canvas parameters.
 class CanvasSizeWindow : public app::gen::CanvasSize
                        , public SelectBoxDelegate
@@ -44,9 +61,10 @@ class CanvasSizeWindow : public app::gen::CanvasSize
 public:
   enum class Dir { NW, N, NE, W, C, E, SW, S, SE };
 
-  CanvasSizeWindow()
+  CanvasSizeWindow(const CanvasSizeParams& params,
+                   const gfx::Rect& bounds)
     : m_editor(current_editor)
-    , m_rect(0, 0, current_editor->sprite()->width(), current_editor->sprite()->height())
+    , m_rect(bounds)
     , m_selectBoxState(
       new SelectBoxState(
         this, m_rect,
@@ -59,6 +77,7 @@ public:
     setRight(0);
     setTop(0);
     setBottom(0);
+    updateBorderFromRect();
 
     width() ->Change.connect(base::Bind<void>(&CanvasSizeWindow::onSizeChange, this));
     height()->Change.connect(base::Bind<void>(&CanvasSizeWindow::onSizeChange, this));
@@ -71,6 +90,7 @@ public:
     m_editor->setState(m_selectBoxState);
 
     dir()->setSelectedItem((int)Dir::C);
+    trim()->setSelected(params.trimOutside());
     updateIcons();
   }
 
@@ -86,6 +106,7 @@ public:
   int getRight()  { return right()->textInt(); }
   int getTop()    { return top()->textInt(); }
   int getBottom() { return bottom()->textInt(); }
+  bool getTrimOutside() { return trim()->isSelected(); }
 
 protected:
 
@@ -267,12 +288,11 @@ private:
   EditorStatePtr m_selectBoxState;
 };
 
-class CanvasSizeCommand : public Command {
-  int m_left, m_right, m_top, m_bottom;
+#endif // ENABLE_UI
 
+class CanvasSizeCommand : public CommandWithNewParams<CanvasSizeParams> {
 public:
   CanvasSizeCommand();
-  Command* clone() const override { return new CanvasSizeCommand(*this); }
 
 protected:
   bool onEnabled(Context* context) override;
@@ -280,9 +300,8 @@ protected:
 };
 
 CanvasSizeCommand::CanvasSizeCommand()
-  : Command(CommandId::CanvasSize(), CmdRecordableFlag)
+  : CommandWithNewParams(CommandId::CanvasSize(), CmdRecordableFlag)
 {
-  m_left = m_right = m_top = m_bottom = 0;
 }
 
 bool CanvasSizeCommand::onEnabled(Context* context)
@@ -293,15 +312,42 @@ bool CanvasSizeCommand::onEnabled(Context* context)
 
 void CanvasSizeCommand::onExecute(Context* context)
 {
+#ifdef ENABLE_UI
+  const bool ui = (params().ui() && context->isUIAvailable());
+#endif
   const ContextReader reader(context);
   const Sprite* sprite(reader.sprite());
+  auto& params = this->params();
 
-  if (context->isUIAvailable()) {
+  gfx::Rect bounds(0, 0, sprite->width(), sprite->height());
+  if (params.bounds.isSet()) {
+    bounds = params.bounds();
+  }
+  else {
+    bounds.enlarge(
+      gfx::Border(params.left(), params.top(),
+                  params.right(), params.bottom()));
+  }
+
+#ifdef ENABLE_UI
+  if (ui) {
+    if (!params.trimOutside.isSet()) {
+      params.trimOutside(Preferences::instance().canvasSize.trimOutside());
+    }
+
     // load the window widget
-    std::unique_ptr<CanvasSizeWindow> window(new CanvasSizeWindow());
+    std::unique_ptr<CanvasSizeWindow> window(new CanvasSizeWindow(params, bounds));
 
     window->remapWindow();
-    window->centerWindow();
+
+    // Find best position for the window on the editor
+    if (DocView* docView = static_cast<UIContext*>(context)->activeView()) {
+      window->positionWindow(
+        docView->bounds().x2() - window->bounds().w,
+        docView->bounds().y);
+    }
+    else
+      window->centerWindow();
 
     load_window_pos(window.get(), "CanvasSize");
     window->setVisible(true);
@@ -311,37 +357,36 @@ void CanvasSizeCommand::onExecute(Context* context)
     if (!window->pressedOk())
       return;
 
-    m_left   = window->getLeft();
-    m_right  = window->getRight();
-    m_top    = window->getTop();
-    m_bottom = window->getBottom();
+    params.left(window->getLeft());
+    params.right(window->getRight());
+    params.top(window->getTop());
+    params.bottom(window->getBottom());
+    params.trimOutside(window->getTrimOutside());
+
+    Preferences::instance().canvasSize.trimOutside(params.trimOutside());
+
+    bounds.enlarge(
+      gfx::Border(params.left(), params.top(),
+                  params.right(), params.bottom()));
   }
+#endif
 
-  // Resize canvas
-
-  int x1 = -m_left;
-  int y1 = -m_top;
-  int x2 = sprite->width() + m_right;
-  int y2 = sprite->height() + m_bottom;
-
-  if (x2 <= x1) x2 = x1+1;
-  if (y2 <= y1) y2 = y1+1;
+  if (bounds.w < 1) bounds.w = 1;
+  if (bounds.h < 1) bounds.h = 1;
 
   {
     ContextWriter writer(reader);
-    Doc* document = writer.document();
+    Doc* doc = writer.document();
     Sprite* sprite = writer.sprite();
     Tx tx(writer.context(), "Canvas Size");
-    DocApi api = document->getApi(tx);
-
-    api.cropSprite(sprite,
-                   gfx::Rect(x1, y1,
-                             MID(1, x2-x1, DOC_SPRITE_MAX_WIDTH),
-                             MID(1, y2-y1, DOC_SPRITE_MAX_HEIGHT)));
+    DocApi api = doc->getApi(tx);
+    api.cropSprite(sprite, bounds, params.trimOutside());
     tx.commit();
 
-    document->generateMaskBoundaries();
-    update_screen_for_document(document);
+#ifdef ENABLE_UI
+    if (context->isUIAvailable())
+      update_screen_for_document(doc);
+#endif
   }
 }
 

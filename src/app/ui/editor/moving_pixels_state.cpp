@@ -1,8 +1,11 @@
 // Aseprite
+// Copyright (C) 2019-2020  Igara Studio S.A.
 // Copyright (C) 2001-2018  David Capello
 //
 // This program is distributed under the terms of
 // the End-User License Agreement for Aseprite.
+
+#define MOVPIXS_TRACE(...) // TRACE(__VA_ARGS__)
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -17,6 +20,7 @@
 #include "app/commands/cmd_rotate.h"
 #include "app/commands/command.h"
 #include "app/commands/commands.h"
+#include "app/commands/move_thing.h"
 #include "app/console.h"
 #include "app/modules/gui.h"
 #include "app/pref/preferences.h"
@@ -33,11 +37,14 @@
 #include "app/ui/status_bar.h"
 #include "app/ui_context.h"
 #include "app/util/clipboard.h"
+#include "app/util/layer_utils.h"
 #include "base/bind.h"
+#include "base/gcd.h"
 #include "base/pi.h"
 #include "doc/algorithm/flip_image.h"
 #include "doc/mask.h"
 #include "doc/sprite.h"
+#include "fmt/format.h"
 #include "gfx/rect.h"
 #include "ui/manager.h"
 #include "ui/message.h"
@@ -45,6 +52,7 @@
 #include "ui/view.h"
 
 #include <cstring>
+#include <limits>
 
 namespace app {
 
@@ -55,6 +63,9 @@ MovingPixelsState::MovingPixelsState(Editor* editor, MouseMessage* msg, PixelsMo
   , m_editor(editor)
   , m_observingEditor(false)
   , m_discarded(false)
+  , m_renderTimer(50)
+  , m_oldSpritePos(std::numeric_limits<int>::min(),
+                   std::numeric_limits<int>::min())
 {
   // MovingPixelsState needs a selection tool to avoid problems
   // sharing the extra cel between the drawing cursor preview and the
@@ -76,6 +87,8 @@ MovingPixelsState::MovingPixelsState(Editor* editor, MouseMessage* msg, PixelsMo
       editor->layer()->isBackground());
   }
   onTransparentColorChange();
+
+  m_renderTimer.Tick.connect([this]{ onRenderTimer(); });
 
   // Hook BeforeCommandExecution signal so we know if the user wants
   // to execute other command, so we can drop pixels.
@@ -111,6 +124,7 @@ MovingPixelsState::~MovingPixelsState()
 
   removePixelsMovement();
   removeAsEditorObserver();
+  m_renderTimer.stop();
 
   m_editor->manager()->removeMessageFilter(kKeyDownMessage, m_editor);
   m_editor->manager()->removeMessageFilter(kKeyUpMessage, m_editor);
@@ -126,16 +140,25 @@ void MovingPixelsState::translate(const gfx::Point& delta)
   m_pixelsMovement->catchImageAgain(gfx::Point(0, 0), MovePixelsHandle);
   m_pixelsMovement->moveImage(delta, PixelsMovement::NormalMovement);
   m_pixelsMovement->dropImageTemporarily();
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::rotate(double angle)
 {
   m_pixelsMovement->rotate(angle);
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::flip(doc::algorithm::FlipType flipType)
 {
   m_pixelsMovement->flipImage(flipType);
+  m_editor->updateStatusBar();
+}
+
+void MovingPixelsState::shift(int dx, int dy)
+{
+  m_pixelsMovement->shift(dx, dy);
+  m_editor->updateStatusBar();
 }
 
 void MovingPixelsState::onEnterState(Editor* editor)
@@ -145,12 +168,24 @@ void MovingPixelsState::onEnterState(Editor* editor)
   update_screen_for_document(editor->document());
 }
 
+void MovingPixelsState::onEditorGotFocus(Editor* editor)
+{
+  ContextBar* contextBar = App::instance()->contextBar();
+  // Make the DropPixelsField widget visible again in the ContextBar
+  // when we are back to an editor in MovingPixelsState. Without this
+  // we would see the SelectionModeField instead which doesn't make
+  // sense on MovingPixelsState).
+  contextBar->updateForMovingPixels();
+}
+
 EditorState::LeaveAction MovingPixelsState::onLeaveState(Editor* editor, EditorState* newState)
 {
-  TRACE("MOVPIXS: onLeaveState\n");
+  MOVPIXS_TRACE("MOVPIXS: onLeaveState\n");
 
   ASSERT(m_pixelsMovement);
   ASSERT(editor == m_editor);
+
+  onRenderTimer();
 
   // If we are changing to another state, we've to drop the image.
   if (m_pixelsMovement->isDragging())
@@ -269,6 +304,9 @@ bool MovingPixelsState::onMouseDown(Editor* editor, MouseMessage* msg)
                                                         getTransformation(editor));
 
     if (handle != NoHandle) {
+      if (layer_is_locked(editor))
+        return true;
+
       // Re-catch the image
       m_pixelsMovement->catchImageAgain(
         editor->screenToEditor(msg->position()), handle);
@@ -282,6 +320,9 @@ bool MovingPixelsState::onMouseDown(Editor* editor, MouseMessage* msg)
   // right-click can be used to deselect/subtract selection, so we
   // should drop the selection in this later case.
   if (editor->isInsideSelection() && msg->left()) {
+    if (layer_is_locked(editor))
+      return true;
+
     // In case that the user is pressing the copy-selection keyboard shortcut.
     EditorCustomizationDelegate* customization = editor->getCustomizationDelegate();
     if ((customization) &&
@@ -334,6 +375,16 @@ bool MovingPixelsState::onMouseMove(Editor* editor, MouseMessage* msg)
 
     // Get the position of the mouse in the sprite
     gfx::Point spritePos = editor->screenToEditor(mousePos);
+    if (spritePos == m_oldSpritePos) {
+      // Avoid redrawing everything if the position in the canvas didn't change.
+      // TODO remove this if we add support for anti-aliasing in the
+      //      transformations
+      return true;
+    }
+    m_oldSpritePos = spritePos;
+
+    m_renderTimer.start();
+    m_pixelsMovement->setFastMode(true);
 
     // Get the customization for the pixels movement (snap to grid, angle snap, etc.).
     KeyContext keyContext = KeyContext::Normal;
@@ -428,7 +479,7 @@ bool MovingPixelsState::onKeyDown(Editor* editor, KeyMessage* msg)
     // The escape key drop pixels and deselect the mask.
     if (msg->scancode() == kKeyEsc) { // TODO make this key customizable
       Command* cmd = Commands::instance()->byId(CommandId::DeselectMask());
-      UIContext::instance()->executeCommand(cmd);
+      UIContext::instance()->executeCommandFromMenuOrShortcut(cmd);
     }
 
     return true;
@@ -451,23 +502,44 @@ bool MovingPixelsState::onKeyUp(Editor* editor, KeyMessage* msg)
 
 bool MovingPixelsState::onUpdateStatusBar(Editor* editor)
 {
+  MOVPIXS_TRACE("MOVPIXS: onUpdateStatusBar (%p)\n", m_pixelsMovement.get());
+
   ASSERT(m_pixelsMovement);
   ASSERT(editor == m_editor);
+
+  // We've received a crash report where this is nullptr when
+  // MovingPixelsState::onLeaveState() generates a general update
+  // notification (notifyGeneralUpdate()) just after the
+  // m_pixelsMovement is deleted with removePixelsMovement(). The
+  // general update signals a scroll update in the view which will ask
+  // for the status bar content again (Editor::notifyScrollChanged).
+  //
+  // We weren't able to reproduce this scenario anyway (which should
+  // be visible with the ASSERT() above).
+  if (!m_pixelsMovement)
+    return false;
 
   const Transformation& transform(getTransformation(editor));
   gfx::Size imageSize = m_pixelsMovement->getInitialImageSize();
 
-  StatusBar::instance()->setStatusText
-    (100, ":pos: %d %d :size: %3d %3d :selsize: %d %d [%.02f%% %.02f%%] :angle: %.1f",
-     int(transform.bounds().x),
-     int(transform.bounds().y),
-     imageSize.w,
-     imageSize.h,
-     int(transform.bounds().w),
-     int(transform.bounds().h),
-     (double)transform.bounds().w*100.0/imageSize.w,
-     (double)transform.bounds().h*100.0/imageSize.h,
-     180.0 * transform.angle() / PI);
+  int w = int(transform.bounds().w);
+  int h = int(transform.bounds().h);
+  int gcd = base::gcd(w, h);
+  StatusBar::instance()->setStatusText(
+    100,
+    fmt::format(
+      ":pos: {} {} :size: {:3d} {:3d} :selsize: {} {} [{:.02f}% {:.02f}%] :angle: {:.1f} :aspect_ratio: {}:{}",
+      int(transform.bounds().x),
+      int(transform.bounds().y),
+      imageSize.w,
+      imageSize.h,
+      w,
+      h,
+      (double)w*100.0/imageSize.w,
+      (double)h*100.0/imageSize.h,
+      180.0 * transform.angle() / PI,
+      w/gcd,
+      h/gcd));
 
   return true;
 }
@@ -487,16 +559,38 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
 {
   Command* command = ev.command();
 
-  TRACE("MOVPIXS: onBeforeCommandExecution %s\n", command->id().c_str());
+  MOVPIXS_TRACE("MOVPIXS: onBeforeCommandExecution %s\n", command->id().c_str());
 
   // If the command is for other editor, we don't drop pixels.
   if (!isActiveEditor())
     return;
 
+  if (layer_is_locked(m_editor) &&
+      (command->id() == CommandId::Flip() ||
+      command->id() == CommandId::Cut() ||
+      command->id() == CommandId::Clear() ||
+      command->id() == CommandId::Rotate())) {
+    ev.cancel();
+    return;
+  }
+
   // We don't need to drop the pixels if a MoveMaskCommand of Content is executed.
-  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(ev.command())) {
+  if (MoveMaskCommand* moveMaskCmd = dynamic_cast<MoveMaskCommand*>(command)) {
     if (moveMaskCmd->getTarget() == MoveMaskCommand::Content) {
-      // Do not drop pixels
+      if (layer_is_locked(m_editor)) {
+        ev.cancel();
+        return;
+      }
+      gfx::Point delta = moveMaskCmd->getMoveThing().getDelta(UIContext::instance());
+      // Verify Shift condition of the MoveMaskCommand (i.e. wrap = true)
+      if (moveMaskCmd->isWrap()) {
+        m_pixelsMovement->shift(delta.x, delta.y);
+      }
+      else {
+        translate(delta);
+      }
+      // We've processed the selection content movement right here.
+      ev.cancel();
       return;
     }
   }
@@ -554,7 +648,7 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
   // avoid dropping the floating region of pixels.
   else if (command->id() == CommandId::Flip()) {
     if (FlipCommand* flipCommand = dynamic_cast<FlipCommand*>(command)) {
-      m_pixelsMovement->flipImage(flipCommand->getFlipType());
+      this->flip(flipCommand->getFlipType());
 
       ev.cancel();
       return;
@@ -564,11 +658,27 @@ void MovingPixelsState::onBeforeCommandExecution(CommandExecutionEvent& ev)
   else if (command->id() == CommandId::Rotate()) {
     if (RotateCommand* rotate = dynamic_cast<RotateCommand*>(command)) {
       if (rotate->flipMask()) {
-        m_pixelsMovement->rotate(rotate->angle());
+        this->rotate(rotate->angle());
 
         ev.cancel();
         return;
       }
+    }
+  }
+  // We can use previous/next frames while transforming the selection
+  // to switch between frames
+  else if (command->id() == CommandId::GotoPreviousFrame() ||
+           command->id() == CommandId::GotoPreviousFrameWithSameTag()) {
+    if (m_pixelsMovement->gotoFrame(-1)) {
+      ev.cancel();
+      return;
+    }
+  }
+  else if (command->id() == CommandId::GotoNextFrame() ||
+           command->id() == CommandId::GotoNextFrameWithSameTag()) {
+    if (m_pixelsMovement->gotoFrame(+1)) {
+      ev.cancel();
+      return;
     }
   }
 
@@ -588,8 +698,10 @@ void MovingPixelsState::onBeforeFrameChanged(Editor* editor)
   if (!isActiveDocument())
     return;
 
-  if (m_pixelsMovement)
+  if (m_pixelsMovement &&
+      !m_pixelsMovement->canHandleFrameChange()) {
     dropPixels();
+  }
 }
 
 void MovingPixelsState::onBeforeLayerChanged(Editor* editor)
@@ -611,6 +723,12 @@ void MovingPixelsState::onTransparentColorChange()
     opaque ?
       app::Color::fromMask():
       Preferences::instance().selection.transparentColor());
+}
+
+void MovingPixelsState::onRenderTimer()
+{
+  m_pixelsMovement->setFastMode(false);
+  m_renderTimer.stop();
 }
 
 void MovingPixelsState::onDropPixels(ContextBarObserver::DropAction action)
@@ -652,7 +770,7 @@ void MovingPixelsState::setTransparentColor(bool opaque, const app::Color& color
 
 void MovingPixelsState::dropPixels()
 {
-  TRACE("MOVPIXS: dropPixels\n");
+  MOVPIXS_TRACE("MOVPIXS: dropPixels\n");
 
   // Just change to default state (StandbyState generally). We'll
   // receive an onLeaveState() event after this call.
@@ -691,7 +809,7 @@ void MovingPixelsState::removeAsEditorObserver()
 
 void MovingPixelsState::removePixelsMovement()
 {
-  m_pixelsMovement.reset(nullptr);
+  m_pixelsMovement.reset();
   m_ctxConn.disconnect();
   m_opaqueConn.disconnect();
   m_transparentConn.disconnect();
